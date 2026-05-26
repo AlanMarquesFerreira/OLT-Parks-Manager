@@ -7,7 +7,11 @@ Este script em Python se conecta via Telnet a uma OLT Parks, verifica as ONUs co
 ## ⚙️ Como usar
 
 1. 🔧 Edite as variáveis no início do código abaixo com os dados da sua OLT:
-
+``` 
+OLT_IP   = "10.0.0.4"
+USERNAME = "root"
+PASSWORD = "12345678"
+```
 ```python
 import telnetlib
 import time
