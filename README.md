@@ -18,9 +18,9 @@ import time
 import re
 from datetime import datetime
 
-OLT_IP   = "10.0.0.2"
+OLT_IP   = "10.0.0.4"
 USERNAME = "root"
-PASSWORD = "12345"
+PASSWORD = "12345678"
 TIMEOUT  = 5
 
 COMANDOS = [
