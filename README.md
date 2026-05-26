@@ -1,6 +1,6 @@
-# 🔌 Script de Limpeza Automática em OLT's PARKS de remoção de ONUs parks Inactive ou Invalid via Telnet
+# 🔌 Script de Limpeza Automática em OLT's PARKS de remoção de ONUs parks Inactive, Invalid ou Pending via Telnet
 
-Este script em Python se conecta via Telnet a uma OLT Parks, verifica as ONUs com status `INACTIVE` ou `INVALID`, e remove automaticamente aquelas com serial iniciado por `prks00`. Ao final, um relatório com as ONUs removidas é salvo.
+Este script em Python se conecta via Telnet a uma OLT Parks, verifica as ONUs com status `INACTIVE`, `INVALID` ou `PENDING`, e remove automaticamente aquelas com serial iniciado por `prks00`. Ao final, um relatório com as ONUs removidas é salvo.
 
 ---
 
@@ -9,65 +9,63 @@ Este script em Python se conecta via Telnet a uma OLT Parks, verifica as ONUs co
 1. 🔧 Edite as variáveis no início do código abaixo com os dados da sua OLT:
 
 ```python
-OLT_IP = "10.0.0.1"        # IP da sua OLT
-USERNAME = "root"          # Usuário de acesso
-PASSWORD = "123456"        # Senha de acesso
-```
-
-2. 🏃‍♂️ Execute o script com Python:
-
-```bash
-python nome_do_arquivo.py
-```
-
-3. 🧾 Um relatório será salvo automaticamente com o nome:
-
-```
-<IP>_relatorio_onus_removidas_<DATA-HORA>.txt
-```
-
-Exemplo: `10.0.0.1_relatorio_onus_removidas_20250530-140640.txt`
-
----
-
-## 📜 Código completo
-
-```python
 import telnetlib
 import time
 import re
 from datetime import datetime
 
-OLT_IP = "10.0.0.1"
+OLT_IP   = "10.0.0.2"
 USERNAME = "root"
-PASSWORD = "123456789"
-TIMEOUT = 5
+PASSWORD = "12345"
+TIMEOUT  = 5
 
 COMANDOS = [
+    # ── INACTIVE ──────────────────────────────
     "sh interface gpon1/1 onu status inactive",
     "sh interface gpon1/2 onu status inactive",
     "sh interface gpon1/3 onu status inactive",
     "sh interface gpon1/4 onu status inactive",
-    "sh interface gpon1/1 onu status invalid",
-    "sh interface gpon1/2 onu status invalid",
-    "sh interface gpon1/3 onu status invalid",
-    "sh interface gpon1/4 onu status invalid",
     "sh interface gpon2/1 onu status inactive",
     "sh interface gpon2/2 onu status inactive",
     "sh interface gpon2/3 onu status inactive",
     "sh interface gpon2/4 onu status inactive",
+    # ── INVALID ───────────────────────────────
+    "sh interface gpon1/1 onu status invalid",
+    "sh interface gpon1/2 onu status invalid",
+    "sh interface gpon1/3 onu status invalid",
+    "sh interface gpon1/4 onu status invalid",
     "sh interface gpon2/1 onu status invalid",
     "sh interface gpon2/2 onu status invalid",
     "sh interface gpon2/3 onu status invalid",
-    "sh interface gpon2/4 onu status invalid"
+    "sh interface gpon2/4 onu status invalid",
+    # ── PENDING ───────────────────────────────
+    "sh interface gpon1/1 onu status pending",
+    "sh interface gpon1/2 onu status pending",
+    "sh interface gpon1/3 onu status pending",
+    "sh interface gpon1/4 onu status pending",
+    "sh interface gpon2/1 onu status pending",
+    "sh interface gpon2/2 onu status pending",
+    "sh interface gpon2/3 onu status pending",
+    "sh interface gpon2/4 onu status pending",
 ]
 
-REGEX_SERIAL = re.compile(r'\((prks\w+)\):')
+REGEX_SERIAL = re.compile(r'(?:\d+-|(?<=\())(prks\w+):')
 
 def send_command(tn, command, wait=1):
     tn.write(command.encode('ascii') + b"\n")
     time.sleep(wait)
     return tn.read_very_eager().decode('ascii', errors='ignore')
+
+def deve_remover(serial: str, status: str) -> bool:
+    """
+    Regras de remoção por status:
+      - pending  → remove QUALQUER serial (todas são indesejadas)
+      - inactive → remove apenas seriais 'prks00...'
+      - invalid  → remove apenas seriais 'prks00...'
+    """
+    if status == "pending":
+        return True
+    return serial.startswith("prks00")
 
 def main():
     try:
@@ -93,57 +91,66 @@ def main():
             tn.close()
             return
 
-        print("[SUCESSO] Login bem-sucedido!")
+        print("[SUCESSO] Login bem-sucedido!\n")
 
-        onus_para_remover = {}
+        onus_para_remover: dict[str, list[tuple[str, str]]] = {}
 
         for comando in COMANDOS:
-            print(f"[INFO] Enviando comando: {comando}")
-            output = send_command(tn, comando, wait=2)
-            print("[RESPOSTA DO COMANDO]:")
-            print(output)
+            # Extrai o status do próprio comando (última palavra)
+            status    = comando.split()[-1]          # inactive | invalid | pending
+            interface = comando.split()[2]           # gpon1/1, etc.
 
-            interface = comando.split()[2]
+            print(f"[INFO] Enviando: {comando}")
+            output = send_command(tn, comando, wait=2)
+            print("[RESPOSTA]:")
+            print(output)
 
             for match in REGEX_SERIAL.finditer(output):
                 serial = match.group(1)
-                if serial.startswith("prks00"):
-                    print(f"[DETECÇÃO] {interface} - {serial}")
-                    onus_para_remover.setdefault(interface, []).append(serial)
+                if deve_remover(serial, status):
+                    print(f"  ► [{status.upper()}] Detectado {serial} em {interface}")
+                    onus_para_remover.setdefault(interface, []).append((serial, status))
 
-        removidas = []
+        removidas: list[tuple[str, str, str]] = []   # (interface, serial, status)
 
         if onus_para_remover:
-            print("[INFO] Iniciando remoção de ONUs problemáticas...")
+            print("\n[INFO] Iniciando remoção de ONUs problemáticas...")
             send_command(tn, "configure terminal", wait=1)
-            for interface, seriais in onus_para_remover.items():
+            for interface, itens in onus_para_remover.items():
                 send_command(tn, f"interface {interface}", wait=1)
-                for serial in seriais:
-                    print(f"[REMOVENDO] {serial} da interface {interface}")
+                for serial, status in itens:
+                    print(f"[REMOVENDO] {serial} [{status}] → {interface}")
                     send_command(tn, f"no onu {serial}", wait=1)
-                    removidas.append((interface, serial))
+                    removidas.append((interface, serial, status))
                 send_command(tn, "exit", wait=0.5)
-            send_command(tn, "end", wait=1)
+            send_command(tn, "end",      wait=1)
             send_command(tn, "copy r s", wait=2)
             print("[SUCESSO] ONUs removidas e configuração salva.")
         else:
-            print("[INFO] Nenhuma ONU INACTIVE ou INVALID encontrada.")
+            print("[INFO] Nenhuma ONU INACTIVE, INVALID ou PENDING encontrada.")
 
         tn.close()
 
         if removidas:
-            data_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+            data_str     = datetime.now().strftime("%Y%m%d-%H%M%S")
             nome_arquivo = f"{OLT_IP}_relatorio_onus_removidas_{data_str}.txt"
-            with open(nome_arquivo, "w") as f:
+            with open(nome_arquivo, "w", encoding="utf-8") as f:
                 f.write(f"Relatório de ONUs removidas - {OLT_IP} - {data_str}\n")
-                f.write("="*60 + "\n")
-                for interface, serial in removidas:
-                    f.write(f"Interface: {interface} | Serial: {serial}\n")
-                f.write("="*60 + "\n")
-                f.write(f"Total removidas: {len(removidas)}\n")
-            print(f"[RELATÓRIO] Relatório salvo em '{nome_arquivo}'.")
+                f.write("=" * 65 + "\n")
+                f.write(f"{'Interface':<14} {'Serial':<20} {'Status'}\n")
+                f.write("-" * 65 + "\n")
+                for interface, serial, status in removidas:
+                    f.write(f"{interface:<14} {serial:<20} {status.upper()}\n")
+                f.write("=" * 65 + "\n")
+
+                for s in ("inactive", "invalid", "pending"):
+                    total = sum(1 for _, _, st in removidas if st == s)
+                    if total:
+                        f.write(f"  {s.upper():<10}: {total} removida(s)\n")
+                f.write(f"  {'TOTAL':<10}: {len(removidas)} removida(s)\n")
+            print(f"[RELATÓRIO] Salvo em '{nome_arquivo}'.")
         else:
-            print("[RELATÓRIO] Nenhuma ONU removida. Nenhum arquivo criado.")
+            print("[RELATÓRIO] Nenhuma ONU removida. Arquivo não criado.")
 
     except Exception as e:
         print(f"[ERRO] {e}")
@@ -151,7 +158,6 @@ def main():
 if __name__ == "__main__":
     main()
 ```
-
 ---
 
 ## 🧠 Autor
@@ -167,7 +173,7 @@ Especialista em automações de rede e scripts para OLTs Parks
 - ⚠️ Python 3.11 ou superior: instale a alternativa `telnetlib3`:
 
 ```bash
-pip install telnetlib3
+python -m pip install telnetlib3
 ```
 
 ---
