@@ -54,10 +54,6 @@ COMANDOS = [
 ]
 
 # Regex robusto: captura QUALQUER serial que esteja dentro de (prks...):
-# Funciona para:
-#   2-03-12-26 (prks00b1e53b):
-#   2- (prks00b1e53b):
-#   9-CAM_03-FINAL-CJ12 (prks00d0a0cb):
 REGEX_SERIAL = re.compile(r'\((prks\w+)\):')
 
 # Prompt da OLT para saber quando parar de ler
